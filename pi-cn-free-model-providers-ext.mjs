@@ -88,8 +88,13 @@ function generateOpenCodeId(prefix) {
   return `${prefix}${timeHex}${suffix}`;
 }
 const SESSION_ID = generateOpenCodeId("ses_");
+
+const OPENCODE_MIN_CLIENT_VERSION = "1.17.0";
+const OPENCODE_CLIENT_VERSION =
+  process.env.OPENCODE_CLIENT_VERSION ?? OPENCODE_MIN_CLIENT_VERSION;
+
 const OPENCODE_STATIC_HEADERS = {
-  "User-Agent": "opencode/1.15.5",
+  "User-Agent": `opencode/${OPENCODE_CLIENT_VERSION}`,
   "x-opencode-client": "cli",
 };
 
