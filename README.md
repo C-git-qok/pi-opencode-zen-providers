@@ -41,9 +41,9 @@ pi install /path/to/pi-cn-free-model-providers-ext.mjs
 仓库已公开：<https://github.com/pgciq/pi-cn-free-model-providers>
 
 ```bash
-pi install git:github.com/pgciq/pi-cn-free-model-providers
+pi install git:github.com/C-git-qok/pi-opencode-zen-providers
 # 或
-pi install https://github.com/pgciq/pi-cn-free-model-providers
+pi install https://github.com/C-git-qok/pi-opencode-zen-providers
 ```
 
 > 扩展始终优先以 `pi-cn-free-model-providers-ext.mjs` 为入口文件（仓库根目录），`pi install` 会自动识别；若需指定分支可追加 `#master`。
@@ -699,7 +699,7 @@ opencode 原生方式不经过 `cleanBody`，但实测标准对话/工具调用�
 6. **单文件可审计**：整个扩展就是一个 `.mjs` 文件，使用前建议通读确认无异常行为。
 7. **代理会导致 500**：Zen API 请求**不能走 HTTP 代理**（实测经 v2rayN/Clash 等代理转发返回 500 Internal server error，直连正常）。若系统全局代理已开启（Windows WinINET），node/bun 的 fetch 默认不读系统代理所以不受影响，但请勿为此扩展显式设置 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量指向代理。
 8. **DeepSeek V4 思维模式回传**：`deepseek-v4-flash`（通过 SenseNova 等）思维模式开启时，DeepSeek 要求历史中 assistant 消息（尤其带 `tool_calls` 的轮次）必须回传 `reasoning_content`，缺失即报 `400 The reasoning_content in the thinking mode must be passed back to the API`。本扩展已把 pi 内部 thinking 块转回顶层 `reasoning_content` 字段随历史回传（空字符串也保留，工具调用轮次强制携带）。
-9. **npm 发布与 Trusted Publisher**：npm 发布由 `.github/workflows/publish-npm.yml` 负责，采用 GitHub Actions OIDC Trusted Publisher，不需要长期保存 `NPM_TOKEN`。发布前递增 `package.json` 版本号，再推送匹配的 `v*` tag；Trusted Publisher 必须绑定仓库 `pgciq/pi-cn-free-model-providers` 和 workflow `.github/workflows/publish-npm.yml`。
+9. **npm 发布与 Trusted Publisher**：npm 发布由 `.github/workflows/publish-npm.yml` 负责，采用 GitHub Actions OIDC Trusted Publisher，不需要长期保存 `NPM_TOKEN`。发布前递增 `package.json` 版本号，再推送匹配的 `v*` tag；Trusted Publisher 必须绑定仓库 `/pi-cn-free-model-providers` 和 workflow `.github/workflows/publish-npm.yml`。
 10. **package.json 的 UTF-8 BOM（1.0.2 已修复）**：1.0.0/1.0.1 发布到 npm 的 `package.json` 首行带 UTF-8 BOM。pi 的 `readPiManifest` 用裸 `JSON.parse` 解析该文件，BOM 会令解析抛错并被静默忽略，导致整个扩展不加载（`/model` 里看不到 `opencode-zen`/`sensenova` 等任何 provider）。1.0.2 起已去掉 BOM；若 `pi install` 后看不到 provider，请 `pi update --extensions` 确认装的是 1.0.2+。pi 侧的健壮性问题已提交：[earendil-works/pi#8310](https://github.com/earendil-works/pi/issues/8310)。
 11. **无需手动配置 auth.json（1.0.4 起）**：旧版要求 `~/.pi/agent/auth.json` 中为每个 provider 添加 `{ "type": "api_key", "key": "public" }` 条目，否则 pi 找不到 key 会直接跳过扩展（报 `No API key found for <provider>`）。1.0.4 起每个 provider 自注册 `apiKey: "public"`（匿名占位），pi 视其为已配置 key，装完即可见可用；要使用账号 key 直接用环境变量即可。重装插件后无需再改 auth.json。
 
