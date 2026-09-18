@@ -1155,10 +1155,9 @@ const AGNES_MODELS = [
 // Models we vouch for: verified free tier + correct metadata (contextWindow,
 // maxTokens, reasoning, input, cost). At load each list is intersected with
 // the provider's live /v1/models so models that leave the free tier or get
-// renamed are auto-removed (drift detection). For Zen, every live model is
-// additionally probe-verified as free at load (see verifyZenModels): unknown
-// free models are auto-added with conservative metadata, and curated entries
-// that switched to paid are dropped despite being whitelisted.
+// renamed are auto-removed (metadata-only drift detection). For Zen, the
+// live /v1/models list is used only to retain curated model IDs that are
+// currently present. No chat-completions probe is issued at load.
 const ZEN_FREE_MODELS = [
   {
     id: "mimo-v2.5-free",
@@ -1701,87 +1700,11 @@ async function filterToLive(curated, url, headers) {
   return kept.length ? kept : curated;
 }
 
-// ── Zen free-model auto-discovery ──
-// /v1/models exposes no pricing and paid models keep "-free" ids, so freeness
-// is verified by probing: a tiny chat completion per unknown model. Free
-// models accept the anonymous "public" key (HTTP 200) while paid ones reject
-// it during auth (401/402/403) before any tokens are billed. When a real
-// OPENCODE_API_KEY is set, the response's `cost` field must be zero instead —
-// paid models then succeed but report non-zero cost.
-// Returns "free" (verified), "paid" (verified not free), or "unknown"
-// (network/shape errors — callers must keep the model rather than drop it,
-// so a transient outage never wipes the list).
-async function probeFreeStatus(modelId) {
-  const apiKey = process.env.OPENCODE_API_KEY;
-  let res;
-  try {
-    res = await fetch("https://opencode.ai/zen/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...OPENCODE_STATIC_HEADERS,
-        "x-opencode-session": SESSION_ID,
-        "x-opencode-request": generateOpenCodeId("msg_"),
-        Authorization: `Bearer ${apiKey ?? "public"}`,
-      },
-      body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "hi" }], max_tokens: 1 }),
-      signal: AbortSignal.timeout(20000),
-    });
-  } catch {
-    return "unknown";
-  }
-  if (!res.ok) {
-    // Auth/billing rejection = verified not free. Anything else (5xx, rate
-    // limit) says nothing about pricing — treat as unknown.
-    return [401, 402, 403].includes(res.status) ? "paid" : "unknown";
-  }
-  let json;
-  try { json = await res.json(); } catch { return "unknown"; }
-  if (apiKey) return Number(json?.cost ?? 0) === 0 ? "free" : "paid";
-  return "free";
-}
-// Run async fn over items with bounded concurrency.
-async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const idx = next++;
-      results[idx] = await fn(items[idx]);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-function makeDiscoveredModel(id) {
-  return {
-    id,
-    name: id,
-    api: "openai-completions",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131072,
-    maxTokens: 65536,
-  };
-}
-// Verify the whole live Zen list by probing every id (curated entries use
-// their hand-verified metadata, unknown ones get conservative defaults). This
-// catches models that switched from free to paid while staying listed — they
-// are dropped exactly like renamed/removed ones. If nothing verifies free
-// (e.g. probes all failed), fall back to the curated ∩ live intersection so a
-// gateway outage never empties the provider.
-async function verifyZenModels(liveIds) {
-  const known = new Map(ZEN_FREE_MODELS.map((m) => [m.id, m]));
-  const ids = [...liveIds];
-  const statuses = await mapLimit(ids, 8, probeFreeStatus);
-  const verified = [];
-  for (let i = 0; i < ids.length; i++) {
-    if (statuses[i] !== "free") continue;
-    verified.push(known.get(ids[i]) ?? makeDiscoveredModel(ids[i]));
-  }
-  if (verified.length) return verified;
-  const kept = ZEN_FREE_MODELS.filter((m) => liveIds.has(m.id));
+// Keep only curated Zen free models that are still present in live /v1/models.
+// This is metadata-only drift detection: no chat-completions probe is issued.
+function filterZenToLive(liveIds) {
+  if (!liveIds) return ZEN_FREE_MODELS;
+  const kept = ZEN_FREE_MODELS.filter((model) => liveIds.has(model.id));
   return kept.length ? kept : ZEN_FREE_MODELS;
 }
 
@@ -2157,13 +2080,12 @@ function registerCapabilitiesCommand(pi) {
   });
 }
 
-// Background drift/probe pass. Best-effort: a failure leaves the already
+// Background metadata refresh. Best-effort: a failure leaves the already
 // registered (curated or cached) models untouched, so the user is never blocked.
 async function verifyAndUpdateModels(pi) {
   // Honor the same 24h cache TTL that loadCache() enforces at boot. Without
-  // this guard the background probe runs unconditionally on every startup and
-  // clobbers a previously-good catalog whenever a flaky-window 1-token probe
-  // hits a transient 500 during free-tier concurrency storms.
+  // this guard the background metadata refresh would run unconditionally on
+  // every startup and unnecessarily hit provider model-list endpoints.
   if (loadCache()) return;
 
   // Overall safety net so a pathological network can never strand this task.
@@ -2181,7 +2103,7 @@ async function verifyAndUpdateModels(pi) {
     filterToLive(AMD_MODELS, `${AMD_URL}/models`, authHeader("AMD_API_KEY")),
     filterToLive(AGNES_MODELS, "https://apihub.agnes-ai.com/v1/models", authHeader("AGNES_API_KEY")),
   ]);
-  const zenModels = zenLive ? await verifyZenModels(zenLive) : ZEN_FREE_MODELS;
+  const zenModels = zenLive ? filterZenToLive(zenLive) : ZEN_FREE_MODELS;
   const verified = {
     zen: zenModels,
     sensenova: sensenovaModels,
@@ -2200,7 +2122,7 @@ async function verifyAndUpdateModels(pi) {
 export default function (pi) {
   // Register immediately with the curated allowlists (or a fresh on-disk cache)
   // so Pi startup is never blocked on network model discovery. The live
-  // drift/probe pass runs in the background and hot-swaps the catalog without a
+  // metadata refresh runs in the background and hot-swaps the catalog without a
   // /reload.
   registerAll(pi, initialModels());
   registerCapabilitiesCommand(pi);
