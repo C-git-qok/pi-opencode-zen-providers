@@ -3,6 +3,7 @@
 // (x-opencode-client: cli + ses_/msg_ ULID ids) and converting
 // developer->system roles (upstream only accepts system/user/assistant).
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -104,10 +105,12 @@ function detectOpenCodeVersion() {
 
 const SESSION_ID = generateOpenCodeId("ses_");
 
+const OPENCODE_FALLBACK_CLIENT_VERSION = "1.18.31";
+
 const OPENCODE_CLIENT_VERSION =
   process.env.OPENCODE_CLIENT_VERSION ??
   detectOpenCodeVersion() ??
-  "1.18.0";
+  OPENCODE_FALLBACK_CLIENT_VERSION;
 
 const OPENCODE_STATIC_HEADERS = {
   "User-Agent": `opencode/${OPENCODE_CLIENT_VERSION}`,
