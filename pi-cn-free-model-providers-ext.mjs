@@ -87,11 +87,27 @@ function generateOpenCodeId(prefix) {
   for (let i = 0; i < 14; i++) suffix += BASE62[bytes[i] % 62];
   return `${prefix}${timeHex}${suffix}`;
 }
+function detectOpenCodeVersion() {
+  try {
+    const output = execFileSync("opencode", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    }).trim();
+
+    const match = output.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/);
+    return match?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const SESSION_ID = generateOpenCodeId("ses_");
 
-const OPENCODE_MIN_CLIENT_VERSION = "1.17.0";
 const OPENCODE_CLIENT_VERSION =
-  process.env.OPENCODE_CLIENT_VERSION ?? OPENCODE_MIN_CLIENT_VERSION;
+  process.env.OPENCODE_CLIENT_VERSION ??
+  detectOpenCodeVersion() ??
+  "1.18.0";
 
 const OPENCODE_STATIC_HEADERS = {
   "User-Agent": `opencode/${OPENCODE_CLIENT_VERSION}`,
